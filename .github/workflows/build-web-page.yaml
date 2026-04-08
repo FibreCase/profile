@@ -1,4 +1,4 @@
-name: Build Web Page
+name: Build, Push, and Deploy Web
 
 on:
   push:
@@ -7,15 +7,20 @@ on:
 
 permissions:
   contents: read
+  packages: write
   pages: write
   id-token: write
 
 concurrency:
-  group: pages
+  group: web-release
   cancel-in-progress: false
 
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/flutter_personal_website
+
 jobs:
-  build-web:
+  build-and-push:
     runs-on: ubuntu-latest
 
     steps:
@@ -41,13 +46,47 @@ jobs:
 
           flutter build web --release --base-href "$BASE_HREF"
 
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=tag
+            type=raw,value=latest
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build and push image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
       - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v4
+        uses: actions/upload-pages-artifact@v3
         with:
           path: build/web
 
   deploy-web:
-    needs: build-web
+    needs: build-and-push
     runs-on: ubuntu-latest
     environment:
       name: github-pages
@@ -56,4 +95,4 @@ jobs:
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v5
+        uses: actions/deploy-pages@v4
